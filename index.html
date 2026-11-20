@@ -565,6 +565,11 @@ const sfx = {
   tick() { tone(950 + Math.random() * 120, 0.022, 'triangle', 0.03); },
   suck() { tone(260, 0.12, 'sine', 0.08, 0, 1.8); },
   crunch(row) { noiseHit(900 + Math.random() * 900 + row * 120, 1.2, 0.22, 0.07); tone(180 + row * 25, 0.05, 'square', 0.035, 0, 0.6); },
+  squish(row) { noiseHit(500 + row * 40, 0.7, 0.2, 0.12, 'lowpass'); tone(320 - row * 10, 0.14, 'sine', 0.09, 0, 0.45); tone(200, 0.08, 'sine', 0.05, 0.05, 1.6); },
+  wood(row) { noiseHit(1600 + Math.random() * 600, 3, 0.26, 0.05); tone(160 + row * 18, 0.06, 'triangle', 0.08, 0, 0.7); noiseHit(800, 1, 0.08, 0.12, 'lowpass'); },
+  candy(row) { noiseHit(3600 + Math.random() * 1200, 2, 0.2, 0.05, 'highpass'); tone(1200 + row * 80, 0.05, 'triangle', 0.05, 0, 0.8); },
+  glass(row) { noiseHit(6500, 4, 0.16, 0.06, 'highpass'); for (let k = 0; k < 3; k++) tone(2200 + Math.random() * 2400, 0.25 + Math.random() * 0.2, 'sine', 0.035, k * 0.03); },
+  metal(row) { tone(820 + row * 30, 0.18, 'square', 0.04, 0, 0.97); tone(1340, 0.22, 'triangle', 0.05); tone(2110, 0.12, 'sine', 0.04); noiseHit(3000, 1.5, 0.12, 0.05); },
   exit(n) { const b = 440 * Math.pow(2, (n % 8) / 12); tone(b, 0.12, 'triangle', 0.14, 0, 2); tone(b * 1.5, 0.15, 'sine', 0.08, 0.05, 1.5); },
   ice() { noiseHit(4000, 2, 0.18, 0.15); [1800, 2400, 3100].forEach((f, i) => tone(f, 0.18, 'sine', 0.05, i * 0.03)); },
   rock() { noiseHit(300, 0.8, 0.3, 0.2, 'lowpass'); tone(90, 0.15, 'triangle', 0.12, 0, 0.6); },
@@ -1052,26 +1057,85 @@ function cutLine(b, dir) {
   if (dir === 't') return { x: ox + b.fx * cell, y: oy - cd, ax: 1, ay: 0, span: b.w, nx: 0, ny: -1 };
   return { x: ox + b.fx * cell, y: oy + L.h * cell + cd, ax: 1, ay: 0, span: b.w, nx: 0, ny: 1 };
 }
+const pcol = (ci, k) => ci === 8 ? RAINBOW[(k || Math.floor(Math.random() * 7)) % 7] : PAL[ci].base;
+const plight = ci => ci === 8 ? '#ffffff' : PAL[ci].light, pdark = ci => ci === 8 ? '#6a5ab0' : PAL[ci].dark;
+// Cada aspecto se rompe a su manera dentro de la ranura
 function shred(b, row) {
-  const ex = b.exiting, cl = cutLine(b, ex.dir), n = cl.span * 2, s = cell * 0.5;
-  for (let k = 0; k < n; k++) {
-    const along = (k + 0.5) * s, x = cl.x + cl.ax * along, y = cl.y + cl.ay * along;
-    const out = 70 + Math.random() * 190, side = (Math.random() - 0.5) * 220;
-    particles.push({ kind: 'chunk', x, y, vx: cl.nx * out + cl.ax * side, vy: cl.ny * out + cl.ay * side - 120 - Math.random() * 120, g: 1300,
-      life: 0.55 + Math.random() * 0.4, max: 0.95, size: s * (0.75 + Math.random() * 0.3), c: b.c, rot: (Math.random() - 0.5) * 0.6, vr: (Math.random() - 0.5) * 16 });
-    for (let m = 0; m < 2; m++) particles.push({ kind: 'dot', x: x + (Math.random() - 0.5) * s, y: y + (Math.random() - 0.5) * s,
-      vx: cl.nx * (40 + Math.random() * 260) + (Math.random() - 0.5) * 260, vy: cl.ny * (40 + Math.random() * 260) + (Math.random() - 0.5) * 260 - 60,
-      g: 900, life: 0.3 + Math.random() * 0.4, max: 0.7, r: cell * (0.03 + Math.random() * 0.05), col: b.c === 8 ? RAINBOW[(k + m) % 7] : (Math.random() < 0.5 ? PAL[b.c].light : PAL[b.c].base) });
+  const ex = b.exiting, cl = cutLine(b, ex.dir), n = cl.span * 2, s = cell * 0.5, style = skinNow();
+  const R = Math.random, ci = b.c;
+  const at = k => { const along = (k + 0.5) * s; return [cl.x + cl.ax * along, cl.y + cl.ay * along]; };
+  const vel = (out, side, up) => [cl.nx * out + cl.ax * side, cl.ny * out + cl.ay * side - (up || 0)];
+  const sparks = (cnt, col, sp0, sp1, life) => { for (let k = 0; k < cnt; k++) {
+    const along = R() * cl.span * cell, a = Math.atan2(cl.ny, cl.nx) + (R() - 0.5) * 2.2, sp = sp0 + R() * (sp1 - sp0);
+    particles.push({ kind: 'spark', x: cl.x + cl.ax * along, y: cl.y + cl.ay * along, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, g: 500, life: life * (0.6 + R() * 0.8), max: life * 1.4, col }); } };
+  if (style === 'gominola') {
+    // goterones de gominola que tiemblan y salpican
+    for (let k = 0; k < n; k++) {
+      const [x, y] = at(k), [vx, vy] = vel(60 + R() * 170, (R() - 0.5) * 200, 160 + R() * 140);
+      particles.push({ kind: 'blob', x, y, vx, vy, g: 1100, life: 0.7 + R() * 0.4, max: 1.1, r: cell * (0.12 + R() * 0.09), col: pcol(ci, k), light: plight(ci), ph: R() * 6 });
+      if (R() < 0.6) particles.push({ kind: 'blob', x, y, vx: vx * 1.4 + (R() - 0.5) * 120, vy: vy * 1.2, g: 1100, life: 0.5, max: 0.6, r: cell * 0.05, col: pcol(ci, k + 2), light: plight(ci), ph: R() * 6 });
+    }
+    sfx.squish(row); buzz(6); shake = Math.max(shake, 1.2);
+  } else if (style === 'madera') {
+    // astillas largas y serrín
+    for (let k = 0; k < n; k++) {
+      const [x, y] = at(k);
+      for (let m = 0; m < 2; m++) { const [vx, vy] = vel(90 + R() * 220, (R() - 0.5) * 260, 120 + R() * 160);
+        particles.push({ kind: 'splinter', x, y, vx, vy, g: 1300, life: 0.6 + R() * 0.4, max: 1, len: cell * (0.28 + R() * 0.32), wid: cell * (0.05 + R() * 0.04), col: m ? pdark(ci) : pcol(ci, k), rot: R() * 6, vr: (R() - 0.5) * 22 }); }
+      for (let m = 0; m < 3; m++) particles.push({ kind: 'dot', x: x + (R() - 0.5) * s, y: y + (R() - 0.5) * s, vx: (R() - 0.5) * 160 + cl.nx * 60, vy: (R() - 0.5) * 120 + cl.ny * 60 - 30, g: 250, life: 0.6 + R() * 0.5, max: 1.1, r: cell * (0.02 + R() * 0.03), col: R() < 0.5 ? '#e8cfa0' : '#c9a46a' });
+    }
+    sfx.wood(row); buzz(9); shake = Math.max(shake, 1.8);
+  } else if (style === 'caramelo') {
+    // trozos de caramelo con su raya y azúcar brillante
+    for (let k = 0; k < n; k++) {
+      const [x, y] = at(k), [vx, vy] = vel(80 + R() * 200, (R() - 0.5) * 240, 140 + R() * 140);
+      particles.push({ kind: 'candy', x, y, vx, vy, g: 1300, life: 0.6 + R() * 0.35, max: 0.95, r: cell * (0.17 + R() * 0.12), col: pcol(ci, k), rot: R() * 6, vr: (R() - 0.5) * 18 });
+      const [vx2, vy2] = vel(60 + R() * 180, (R() - 0.5) * 260, 120 + R() * 120);
+      particles.push({ kind: 'candy', x, y, vx: vx2, vy: vy2, g: 1300, life: 0.5 + R() * 0.3, max: 0.8, r: cell * (0.1 + R() * 0.07), col: pcol(ci, k + 1), rot: R() * 6, vr: (R() - 0.5) * 22 });
+      for (let m = 0; m < 3; m++) particles.push({ kind: 'sugar', x, y, vx: (R() - 0.5) * 300 + cl.nx * 120, vy: (R() - 0.5) * 300 + cl.ny * 120 - 60, g: 700, life: 0.4 + R() * 0.5, max: 0.9, r: cell * (0.02 + R() * 0.02), ph: R() * 6 });
+    }
+    sfx.candy(row); buzz(6); shake = Math.max(shake, 1.4);
+  } else if (style === 'cristal') {
+    // esquirlas de cristal que destellan al girar
+    for (let k = 0; k < n; k++) {
+      const [x, y] = at(k);
+      for (let m = 0; m < 2; m++) { const [vx, vy] = vel(100 + R() * 260, (R() - 0.5) * 300, 100 + R() * 160);
+        const pts = []; const r = cell * (0.1 + R() * 0.14); for (let q = 0; q < 3 + (R() < 0.4 ? 1 : 0); q++) { const a = q / 3.4 * Math.PI * 2 + R() * 0.8; pts.push([Math.cos(a) * r * (0.6 + R() * 0.6), Math.sin(a) * r * (0.6 + R() * 0.6)]); }
+        particles.push({ kind: 'glass', x, y, vx, vy, g: 1200, life: 0.65 + R() * 0.4, max: 1.05, pts, col: pcol(ci, k), rot: R() * 6, vr: (R() - 0.5) * 20 }); }
+    }
+    for (let k = 0; k < 5; k++) { const along = R() * cl.span * cell; const a = R() * 6.28, sp = 60 + R() * 200;
+      particles.push({ kind: 'star', x: cl.x + cl.ax * along, y: cl.y + cl.ay * along, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, g: 200, life: 0.3 + R() * 0.3, max: 0.6, r: cell * (0.04 + R() * 0.04), col: '#ffffff', rot: 0, vr: 8 }); }
+    sfx.glass(row); buzz(5); shake = Math.max(shake, 1.2);
+  } else if (style === 'metal') {
+    // tuercas, tornillos y chispas naranjas
+    for (let k = 0; k < n; k++) {
+      const [x, y] = at(k), [vx, vy] = vel(80 + R() * 200, (R() - 0.5) * 240, 150 + R() * 150);
+      particles.push({ kind: R() < 0.55 ? 'nut' : 'bolt', x, y, vx, vy, g: 1500, life: 0.75 + R() * 0.4, max: 1.15, r: cell * (0.14 + R() * 0.07), col: pcol(ci, k), rot: R() * 6, vr: (R() - 0.5) * 18 });
+      if (R() < 0.5) particles.push({ kind: 'chunk', x, y, vx: vx * 0.8, vy: vy * 0.8, g: 1400, life: 0.5 + R() * 0.3, max: 0.8, size: s * (0.6 + R() * 0.25), c: ci, rot: R() * 6, vr: (R() - 0.5) * 14 });
+    }
+    sparks(10, '#ffb347', 300, 700, 0.3); sparks(4, '#fff3c0', 300, 600, 0.2);
+    sfx.metal(row); buzz(10); shake = Math.max(shake, 2);
+  } else {
+    for (let k = 0; k < n; k++) {
+      const [x, y] = at(k);
+      const out = 70 + R() * 190, side = (R() - 0.5) * 220;
+      particles.push({ kind: 'chunk', x, y, vx: cl.nx * out + cl.ax * side, vy: cl.ny * out + cl.ay * side - 120 - R() * 120, g: 1300,
+        life: 0.55 + R() * 0.4, max: 0.95, size: s * (0.75 + R() * 0.3), c: ci, rot: (R() - 0.5) * 0.6, vr: (R() - 0.5) * 16 });
+      for (let m = 0; m < 2; m++) particles.push({ kind: 'dot', x: x + (R() - 0.5) * s, y: y + (R() - 0.5) * s,
+        vx: cl.nx * (40 + R() * 260) + (R() - 0.5) * 260, vy: cl.ny * (40 + R() * 260) + (R() - 0.5) * 260 - 60,
+        g: 900, life: 0.3 + R() * 0.4, max: 0.7, r: cell * (0.03 + R() * 0.05), col: ci === 8 ? RAINBOW[(k + m) % 7] : (R() < 0.5 ? PAL[ci].light : PAL[ci].base) });
+    }
+    sparks(4, '#fff7d6', 250, 600, 0.25);
+    sfx.crunch(row); buzz(7); shake = Math.max(shake, 1.6);
   }
-  for (let k = 0; k < 4; k++) {
-    const along = Math.random() * cl.span * cell, a = Math.atan2(cl.ny, cl.nx) + (Math.random() - 0.5) * 2.2, sp = 250 + Math.random() * 350;
-    particles.push({ kind: 'spark', x: cl.x + cl.ax * along, y: cl.y + cl.ay * along, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, g: 500, life: 0.15 + Math.random() * 0.2, max: 0.35, col: '#fff7d6' });
-  }
-  sfx.crunch(row); buzz(7); shake = Math.max(shake, 1.6);
 }
 function finale(b, ex) {
   const cl = cutLine(b, ex.dir), mid = cl.span * cell / 2, x = cl.x + cl.ax * mid, y = cl.y + cl.ay * mid;
-  particles.push({ kind: 'ring', x, y, r0: cell * 0.2, r1: cell * (0.9 + cl.span * 0.35), life: 0.45, max: 0.45, col: b.c === 8 ? '#fff' : PAL[b.c].light });
+  const style = skinNow();
+  particles.push({ kind: 'ring', x, y, r0: cell * 0.2, r1: cell * (0.9 + cl.span * 0.35), life: 0.45, max: 0.45, col: style === 'metal' ? '#ffb347' : style === 'madera' ? '#e8cfa0' : b.c === 8 ? '#fff' : PAL[b.c].light });
+  if (style === 'gominola') for (let i = 0; i < 10; i++) { const a = Math.random() * 6.28, sp = 150 + Math.random() * 250; particles.push({ kind: 'blob', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 100, g: 900, life: 0.6, max: 0.7, r: cell * 0.08, col: pcol(b.c, i), light: plight(b.c), ph: i }); }
+  if (style === 'cristal') particles.push({ kind: 'flash', x, y, life: 0.25, max: 0.25, r: cell * (1 + cl.span * 0.4) });
+  if (style === 'metal') for (let i = 0; i < 2; i++) particles.push({ kind: 'gear', x, y, vx: (Math.random() - 0.5) * 200 + cl.nx * 150, vy: -200 - Math.random() * 150 + cl.ny * 150, g: 1200, life: 1, max: 1, r: cell * 0.2, rot: 0, vr: (Math.random() - 0.5) * 10 });
   for (let i = 0; i < 14; i++) {
     const a = Math.random() * Math.PI * 2, sp = 120 + Math.random() * 280;
     particles.push({ kind: 'star', x, y, vx: Math.cos(a) * sp + cl.nx * 120, vy: Math.sin(a) * sp + cl.ny * 120 - 60, g: 500,
@@ -1508,6 +1572,58 @@ function drawParticles(c) {
       c.beginPath(); c.moveTo(0, -p.r); c.lineTo(p.r * 0.6, p.r * 0.5); c.lineTo(-p.r * 0.5, p.r * 0.7); c.closePath(); c.fill(); c.restore();
     } else if (p.kind === 'conf') {
       c.globalAlpha = a; c.fillStyle = p.col; c.save(); c.translate(p.x, p.y); c.rotate(p.rot); c.fillRect(-p.r, -p.r * 0.6, p.r * 2, p.r * 1.2); c.restore();
+    } else if (p.kind === 'blob') {
+      const k = clamp(p.life / p.max, 0, 1), wob = Math.sin(p.ph + (1 - k) * 25) * 0.18;
+      c.globalAlpha = Math.min(1, k * 2.5);
+      const sq = clamp(Math.abs(p.vy) / 1600, 0, 0.35);
+      c.save(); c.translate(p.x, p.y); c.scale(1 + wob - sq * 0.5, 1 - wob + sq);
+      c.fillStyle = p.col; c.beginPath(); c.arc(0, 0, p.r, 0, 7); c.fill();
+      c.fillStyle = 'rgba(255,255,255,.6)'; c.beginPath(); c.ellipse(-p.r * 0.3, -p.r * 0.35, p.r * 0.35, p.r * 0.2, -0.5, 0, 7); c.fill();
+      c.restore();
+    } else if (p.kind === 'splinter') {
+      c.globalAlpha = a; c.save(); c.translate(p.x, p.y); c.rotate(p.rot);
+      c.fillStyle = p.col; c.beginPath(); c.moveTo(-p.len / 2, 0); c.lineTo(-p.len / 4, -p.wid / 2); c.lineTo(p.len / 2, -p.wid * 0.15); c.lineTo(p.len / 3, p.wid / 2); c.closePath(); c.fill();
+      c.strokeStyle = 'rgba(70,35,10,.35)'; c.lineWidth = 1; c.beginPath(); c.moveTo(-p.len / 3, 0); c.lineTo(p.len / 3, 0); c.stroke();
+      c.restore();
+    } else if (p.kind === 'candy') {
+      c.globalAlpha = a; c.save(); c.translate(p.x, p.y); c.rotate(p.rot);
+      c.beginPath(); c.moveTo(0, -p.r); c.lineTo(p.r * 0.9, p.r * 0.6); c.lineTo(-p.r * 0.8, p.r * 0.7); c.closePath();
+      c.fillStyle = p.col; c.fill(); c.save(); c.clip();
+      c.fillStyle = 'rgba(255,255,255,.65)'; c.fillRect(-p.r, -p.r * 0.15, p.r * 2, p.r * 0.32); c.restore();
+      c.fillStyle = 'rgba(255,255,255,.7)'; c.beginPath(); c.arc(-p.r * 0.1, -p.r * 0.35, p.r * 0.14, 0, 7); c.fill();
+      c.restore();
+    } else if (p.kind === 'sugar') {
+      c.globalAlpha = a * (0.5 + 0.5 * Math.sin(p.ph + p.life * 40)); c.fillStyle = '#fff';
+      c.fillRect(p.x - p.r, p.y - p.r, p.r * 2, p.r * 2);
+    } else if (p.kind === 'glass') {
+      const glint = 0.5 + 0.5 * Math.cos(p.rot * 2);
+      c.globalAlpha = a; c.save(); c.translate(p.x, p.y); c.rotate(p.rot);
+      c.beginPath(); p.pts.forEach(([x, y], q) => q ? c.lineTo(x, y) : c.moveTo(x, y)); c.closePath();
+      c.fillStyle = p.col; c.globalAlpha = a * 0.8; c.fill();
+      c.globalAlpha = a * (0.1 + 0.45 * glint); c.fillStyle = 'rgba(255,255,255,.7)'; c.fill();
+      c.globalAlpha = a; c.strokeStyle = 'rgba(255,255,255,.95)'; c.lineWidth = Math.max(1, cell * 0.02); c.stroke();
+      c.restore();
+    } else if (p.kind === 'nut' || p.kind === 'gear') {
+      c.globalAlpha = a; c.save(); c.translate(p.x, p.y); c.rotate(p.rot);
+      const teeth = p.kind === 'gear' ? 8 : 6;
+      c.beginPath();
+      for (let q = 0; q < teeth * (p.kind === 'gear' ? 2 : 1); q++) { const an = q / (teeth * (p.kind === 'gear' ? 2 : 1)) * Math.PI * 2, rr2 = p.kind === 'gear' ? (q % 2 ? p.r * 0.75 : p.r) : p.r; c.lineTo(Math.cos(an) * rr2, Math.sin(an) * rr2); }
+      c.closePath();
+      const mg = c.createLinearGradient(-p.r, -p.r, p.r, p.r); mg.addColorStop(0, '#eef0f6'); mg.addColorStop(0.5, '#a8acbd'); mg.addColorStop(1, '#6d7189');
+      c.fillStyle = mg; c.fill(); c.strokeStyle = 'rgba(60,62,80,.6)'; c.lineWidth = 1; c.stroke();
+      c.fillStyle = 'rgba(40,42,60,.85)'; c.beginPath(); c.arc(0, 0, p.r * 0.38, 0, 7); c.fill();
+      c.restore();
+    } else if (p.kind === 'bolt') {
+      c.globalAlpha = a; c.save(); c.translate(p.x, p.y); c.rotate(p.rot);
+      const mg = c.createLinearGradient(0, -p.r, 0, p.r); mg.addColorStop(0, '#eef0f6'); mg.addColorStop(1, '#7d8199');
+      c.fillStyle = mg; c.fillRect(-p.r * 0.25, -p.r * 0.2, p.r * 1.6, p.r * 0.4);
+      c.strokeStyle = 'rgba(60,62,80,.5)'; c.lineWidth = 1; for (let q = 0; q < 4; q++) { c.beginPath(); c.moveTo(p.r * (0.05 + q * 0.32), -p.r * 0.2); c.lineTo(p.r * (0.2 + q * 0.32), p.r * 0.2); c.stroke(); }
+      c.fillStyle = '#b8bccb'; c.fillRect(-p.r * 0.7, -p.r * 0.5, p.r * 0.5, p.r);
+      c.restore();
+    } else if (p.kind === 'flash') {
+      const k = p.life / p.max; c.globalAlpha = k * 0.8;
+      const g = c.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r); g.addColorStop(0, '#ffffff'); g.addColorStop(1, 'rgba(255,255,255,0)');
+      c.fillStyle = g; c.beginPath(); c.arc(p.x, p.y, p.r * (1.3 - k * 0.3), 0, 7); c.fill();
     } else if (p.kind === 'emoji') {
       c.globalAlpha = a; c.font = Math.round(p.r * 2) + 'px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(p.ch, p.x, p.y);
     } else {
@@ -1982,6 +2098,7 @@ function startZen() {
 
 // ---------- TIENDA ----------
 const SKINS = [['clasico', 'Clásico', 0], ['gominola', 'Gominola', 400], ['madera', 'Madera', 600], ['caramelo', 'Caramelo', 800], ['cristal', 'Cristal', 1200], ['metal', 'Metal', 1500]];
+const SKINBREAK = { clasico: 'se tritura en piezas con pivotes', gominola: 'revienta en goterones que tiemblan', madera: 'se astilla y suelta serrín', caramelo: 'cruje en trozos con azúcar brillante', cristal: 'estalla en esquirlas que destellan', metal: 'suelta tuercas, tornillos y chispas' };
 function skinPreview(style) {
   const cvp = document.createElement('canvas'), saveCell = cell; cell = 24;
   cvp.width = 72 * 2; cvp.height = 48 * 2; cvp.className = 'skinprev';
@@ -1997,7 +2114,7 @@ function openShop() {
     for (const [id, name, price] of SKINS) {
       const own = !!S.skins[id], on = S.skin === id;
       const d = el('div', 'dcard'); d.appendChild(skinPreview(id));
-      d.appendChild(el('div', '', '<div class="dn">' + name + '</div><div class="dd">' + (on ? 'En uso' : own ? 'Comprado' : price + ' 🪙') + '</div>'));
+      d.appendChild(el('div', '', '<div class="dn">' + name + '</div><div class="dd">' + SKINBREAK[id] + '<br>' + (on ? 'En uso' : own ? 'Comprado' : price + ' 🪙') + '</div>'));
       const b = el('button', 'btn ' + (on ? 'light' : own ? 'go' : 'gold') + ' sm', on ? '✓' : own ? 'Usar' : 'Comprar');
       b.style.marginLeft = 'auto';
       b.onclick = ev => {
