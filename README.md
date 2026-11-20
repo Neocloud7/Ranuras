@@ -1,2 +1,5 @@
 # Ranuras
-Ranuras: puzle de bloques que salen por la ranura de su color
+
+Puzle de bloques: desliza cada pieza hasta la ranura de su color.
+
+Jugar: https://neocloud7.github.io/Ranuras/
