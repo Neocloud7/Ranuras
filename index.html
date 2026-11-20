@@ -49,6 +49,10 @@
   #stage { flex:1; position:relative; min-height:0; }
   #cv { position:absolute; inset:0; width:100%; height:100%; display:block; }
   #hint { position:absolute; left:0; right:0; bottom:8px; text-align:center; font-size:15px; font-weight:500; opacity:.85; pointer-events:none; padding:0 20px; }
+  .deadmsg { display:inline-block; background:#f2384a; color:#fff; padding:6px 14px; border-radius:16px; font-weight:600; font-size:14px; opacity:1; }
+  #hint:has(.deadmsg) { opacity:1; }
+  .btn.pulse { animation:pulse 0.9s ease-in-out infinite; background:#ffc21a; }
+  @keyframes pulse { 50%{ transform:scale(1.12); } }
   #skipPill { position:absolute; left:50%; bottom:6px; transform:translateX(-50%); display:none; z-index:2; }
   .toast { position:fixed; left:50%; top:40%; transform:translate(-50%,-50%); font:700 34px 'Fredoka',sans-serif; color:#fff; text-shadow:0 3px 0 rgba(0,0,0,.25); pointer-events:none; animation:toast 1s forwards; z-index:30; white-space:nowrap; }
   @keyframes toast { 0%{opacity:0; transform:translate(-50%,-30%) scale(.6)} 20%{opacity:1; transform:translate(-50%,-50%) scale(1.1)} 70%{opacity:1} 100%{opacity:0; transform:translate(-50%,-90%)} }
@@ -341,7 +345,10 @@ function Solver(L) {
     return { ok: false };
   }
   // Pista: primer movimiento útil desde un estado. Devuelve {i, path:[[x,y]...], exit:'t'|'b'|'l'|'r'|null}
-  function hint(st0, limit = 40000, maxDepth = 8) {
+  // Devuelve el primer movimiento útil, {dead:true} si desde aquí ya no hay solución, o null si no da tiempo a saberlo.
+  function hint(st0, limit = 40000, maxDepth = 14, ms = 1500) {
+    const t0 = Date.now();
+    if (done(st0)) return { i: -1, path: [], exit: null, done: true };
     for (let i = 0; i < st0.pos.length; i++) {
       if (!st0.pos[i]) continue;
       const r = reach(st0, i);
@@ -361,12 +368,12 @@ function Solver(L) {
           if (done(r.st)) { const rr = reach(st0, first.i); return { i: first.i, path: pathTo(rr, first.cell), exit: null }; }
           const k = key(r.st); if (seen.has(k)) continue;
           seen.add(k); next.push({ st: r.st, first });
-          if (++nodes > limit) return null;
+          if (++nodes > limit || (nodes % 500 === 0 && Date.now() - t0 > ms)) return null;
         }
       }
       frontier = next;
     }
-    return null;
+    return frontier.length ? null : { dead: true };
   }
   return { initial, solve, hint, reach, reduce, removed };
 }
@@ -638,7 +645,7 @@ function loadBoard(lv) {
   L.gates.forEach(g => { g.flash = 0; g.closedShown = false; });
   blocks = L.blocks.map((b, k) => ({ id: k, x: b.x, y: b.y, fx: b.x, fy: b.y, w: b.w, h: b.h, c: b.c, c2: b.c2 === undefined ? null : b.c2, a: b.a, i: b.i, k: b.k, m: b.m,
     iceShown: b.i, out: false, exiting: null, lift: 0, pop: -0.05 - k * 0.03, wig: 0, rev: 0, splash: 0 }));
-  syncStates();
+  syncStates(); clearTimeout(deadTimer); deadShown = false; $('bUndo').classList.remove('pulse');
   startTime = performance.now();
   layout(); warm(); updateHud();
 }
@@ -933,7 +940,7 @@ function countMove(b, snap) {
   history.push(snap); if (history.length > 300) history.shift();
   if (b.id !== lastMoved) { moves++; S.stats.moves++; }
   lastMoved = b.id; hintShow = null;
-  updateHud();
+  updateHud(); scheduleDeadCheck();
   if (G && G.limit && moves > G.limit && !won) setTimeout(() => { if (!won && G.limit && moves > G.limit) G.onFail && G.onFail(); }, 350);
 }
 function undo() {
@@ -942,7 +949,7 @@ function undo() {
   const s = history.pop();
   blocks.forEach(b => { const p = s.pos[b.id]; b.x = p.x; b.y = p.y; b.out = p.out; b.c = p.c; b.c2 = p.c2; b.fx = b.x; b.fy = b.y; b.exiting = null; });
   syncStates();
-  moves = s.moves; lastMoved = s.last; hintShow = null; sfx.snap(); updateHud();
+  moves = s.moves; lastMoved = s.last; hintShow = null; sfx.snap(); updateHud(); scheduleDeadCheck();
 }
 
 // ================= entrada =================
@@ -995,6 +1002,7 @@ function release(e) {
   drag = null;
   const rx = Math.round(b.fx), ry = Math.round(b.fy);
   const cxp = clamp(rx, 0, L.w - b.w), cyp = clamp(ry, 0, L.h - b.h);
+  if (d.lastP !== cxp + ',' + cyp) { const pc = paintColorAt(b, cxp, cyp); if (pc >= 0 && pc !== b.c) paintBlock(b, pc); }
   const side = flushSide(b, cxp, cyp);
   const fresh = e && e.timeStamp - d.lt < 90;
   const v = !side || !fresh ? 0 : side === 'l' ? -d.vx : side === 'r' ? d.vx : side === 't' ? -d.vy : d.vy;
@@ -1104,24 +1112,53 @@ function confetti(n = 160) {
 }
 function toast(txt, color) {
   const t = document.createElement('div'); t.className = 'toast'; t.textContent = txt; if (color) t.style.color = color;
+  if (txt.length > 14) { t.style.fontSize = '20px'; t.style.whiteSpace = 'normal'; t.style.width = '80vw'; t.style.textAlign = 'center'; }
   document.body.appendChild(t); setTimeout(() => t.remove(), 1000);
 }
 
 // ================= pistas =================
-function solverHint() {
+function gameState() {
   const st = { pos: [], col: [], lay: [] };
   const byId = blocks.slice().sort((a, b) => a.id - b.id);
   for (const b of byId) { st.pos.push(gone(b) ? null : [b.x, b.y]); st.col.push(b.c); st.lay.push(b.c2 === null || b.c2 === undefined ? -1 : b.c2); }
-  const h = Solver(L).hint(st);
+  return { st, byId };
+}
+function solverHint(ms) {
+  const { st, byId } = gameState();
+  const h = Solver(L).hint(st, 150000, 16, ms || 2500);
   if (!h) return null;
+  if (h.dead) return { dead: true };
+  if (h.done) return null;
   return { id: byId[h.i].id, path: h.path, exit: h.exit };
+}
+// Con pintura un movimiento puede dejar el nivel sin salida: se comprueba al terminar cada jugada.
+let deadTimer = 0, deadShown = false;
+function scheduleDeadCheck() {
+  clearTimeout(deadTimer);
+  if (!L || !L.paints || !L.paints.length || !G || G.mode === 'edit') return;
+  const my = loadId;
+  deadTimer = setTimeout(() => {
+    if (my !== loadId || won || drag || blocks.some(b => b.exiting)) { if (my === loadId && !won) scheduleDeadCheck(); return; }
+    const { st } = gameState();
+    const h = Solver(L).hint(st, 30000, 16, 400);
+    setDead(!!(h && h.dead));
+  }, 350);
+}
+function setDead(v) {
+  if (v === deadShown) return;
+  deadShown = v;
+  $('bUndo').classList.toggle('pulse', v);
+  if (v) { $('hint').innerHTML = '<span class="deadmsg">🚫 Así ya no se puede resolver: deshaz ↶ o reinicia ⟲</span>'; sfx.fail(); buzz([20, 40, 20]); }
+  else if ($('hint').querySelector('.deadmsg')) $('hint').textContent = '';
+  layout(); warm();
 }
 function useHint() {
   if (!L || won || drag || blocks.some(b => b.exiting)) return;
   const free = G && G.freeHints;
   const go = () => {
     const h = solverHint();
-    if (!h) { toast('Prueba a reiniciar', '#fff'); return false; }
+    if (h && h.dead) { setDead(true); showModal({ icon: '🚫', title: 'Sin salida', text: 'Con las piezas así ya no se puede resolver (seguramente alguna se ha pintado de un color que no le conviene). Deshaz movimientos hasta antes de ese momento o reinicia. No se ha gastado la pista.', buttons: [{ label: 'Deshacer', cls: 'go', fn: () => undo() }, { label: 'Reiniciar', fn: () => $('bReset').click() }] }); return false; }
+    if (!h) { toast('Uy, este es complicado: deshaz un poco y pide otra', '#fff'); return false; }
     const b = blocks.find(o => o.id === h.id); if (b && b.m) { b.m = false; b.rev = 1; }
     hintShow = { ...h, t: 0 }; S.stats.hints++; sfx.bonus(); updateHud(); return true;
   };
@@ -1737,7 +1774,7 @@ const MECH = {
   rainbow: { icon: '🌈', title: 'Pieza arcoíris', text: 'Las piezas arcoíris caben por cualquier ranura, sea del color que sea.' },
   key: { icon: '🔑', title: 'Llave y candado', text: 'Las ranuras con candado se abren cuando sale la pieza que lleva la llave.' },
   cracked: { icon: '🪨', title: 'Piedra agrietada', text: 'Estas piedras se rompen cuando salen tantas piezas como marca su número.' },
-  paint: { icon: '🎨', title: 'Pintura', text: 'Si una pieza pasa por encima de una mancha de pintura, se vuelve de ese color.' },
+  paint: { icon: '🎨', title: 'Pintura', text: 'Si una pieza pasa por encima de una mancha de pintura, se vuelve de ese color. ¡Ojo por dónde las llevas! Si una se pinta mal, el juego te avisará para que deshagas.' },
   mystery: { icon: '❓', title: 'Piezas misteriosas', text: 'No sabrás de qué color son hasta que las toques.' },
   counter: { icon: '🔢', title: 'Ranura con contador', text: 'Estas ranuras están cerradas hasta que salgan tantas piezas como indica su número.' },
   wildgate: { icon: '🎪', title: 'Ranura comodín', text: 'La ranura arcoíris acepta piezas de cualquier color.' },
