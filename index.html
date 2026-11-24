@@ -642,7 +642,7 @@ function ac() {
 document.addEventListener('visibilitychange', () => { if (!document.hidden && AC) ac(); });
 const live = () => AC && AC.state === 'running';
 function tone(f, d = 0.08, type = 'sine', v = 0.12, delay = 0, slide = 0) {
-  if (!live() || !S.sound) return;
+  if (!live() || !S.sound || !isFinite(f) || !isFinite(d)) return;
   const a = AC, t = a.currentTime + delay, o = a.createOscillator(), g = a.createGain();
   o.type = type; o.frequency.setValueAtTime(f, t);
   if (slide) o.frequency.exponentialRampToValueAtTime(f * slide, t + d);
@@ -662,7 +662,7 @@ function noiseHit(freq, q, vol, dur, type = 'bandpass') {
   g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 0.004); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
   src.connect(f); f.connect(g); g.connect(master); src.start(t, Math.random() * 0.2); src.stop(t + dur + 0.02);
 }
-const sfx = {
+const sfx0 = {
   grab() { tone(520, 0.05, 'triangle', 0.08); },
   snap() { tone(300, 0.06, 'triangle', 0.1, 0, 0.7); },
   bump() { tone(140, 0.09, 'square', 0.05, 0, 0.8); },
@@ -698,9 +698,10 @@ const sfx = {
   pop(row) { tone(500 + row * 80 + Math.random() * 200, 0.06, 'sine', 0.12, 0, 2.4); },
   chip(row) { tone(330 * Math.pow(2, (row % 6) / 6), 0.06, 'square', 0.05); tone(660 * Math.pow(2, (row % 6) / 6), 0.05, 'square', 0.035, 0.05); },
   leaves(row) { noiseHit(3000, 0.7, 0.1, 0.18, 'highpass'); },
-  snap(row) { noiseHit(1500, 2, 0.24, 0.04); tone(300 + row * 20, 0.05, 'triangle', 0.06, 0, 0.6); },
+  choco(row) { noiseHit(1500, 2, 0.24, 0.04); tone(300 + (row || 0) * 20, 0.05, 'triangle', 0.06, 0, 0.6); },
   bonus() { [880, 1320].forEach((f, i) => tone(f, 0.12, 'triangle', 0.1, i * 0.06)); },
 };
+const sfx = new Proxy(sfx0, { get: (o, k) => { const f = o[k]; return typeof f === 'function' ? (...a) => { try { f(...a); } catch (e) {} } : f; } });
 function buzz(ms) { if (!S.vib) return; try { navigator.vibrate && navigator.vibrate(ms); } catch (e) {} }
 
 // ================= música generativa =================
@@ -1413,7 +1414,7 @@ const BREAK = {
   hojas: { snd: 'leaves', shake: 0.9, unit(E) { const { R, ci, k } = E;
       for (let m = 0; m < 2; m++) { const [vx, vy] = E.v(70 + R() * 200, (R() - 0.5) * 240, 140 + R() * 100);
         E.push({ kind: 'leaf', vx, vy, g: 220, drag: 1.6, life: 1.2 + R() * 0.6, max: 1.8, r: cell * (0.12 + R() * 0.08), col: m ? '#5aa83a' : pcol(ci, k), rot: R() * 6, vr: (R() - 0.5) * 5, ph: R() * 6, fs: 5 + R() * 5 }); } } },
-  chocolate: { snd: 'snap', shake: 1.5, unit(E) { const { R, ci, k } = E;
+  chocolate: { snd: 'choco', shake: 1.5, unit(E) { const { R, ci, k } = E;
       for (let m = 0; m < 2; m++) { const [vx, vy] = E.v(70 + R() * 200, (R() - 0.5) * 240, 140 + R() * 120);
         E.push({ kind: 'crumb', vx, vy, g: 1400, life: 0.6 + R() * 0.4, max: 1, pts: polyPts(cell * (0.08 + R() * 0.1), 4, R), col: m ? '#5a3418' : pdark(ci), rot: R() * 6, vr: (R() - 0.5) * 12 }); }
       if (R() < 0.6) { const [vx, vy] = E.v(40 + R() * 120, (R() - 0.5) * 160, 60); E.push({ kind: 'blob', vx, vy, g: 1300, life: 0.6, max: 0.8, r: cell * (0.05 + R() * 0.04), col: '#6a3c1c', ph: R() * 6 }); } } },
