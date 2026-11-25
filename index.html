@@ -245,6 +245,7 @@
   .mdeco { position:absolute; font-size:26px; opacity:.75; pointer-events:none; z-index:1; }
   .dzrow { display:flex; justify-content:space-between; align-items:center; gap:10px; margin:8px 0; font-weight:600; }
   .dzrow select, .dzrow input { flex:1; max-width:60%; font:inherit; padding:6px; border-radius:10px; border:2px solid #dcdcec; }
+  #bHint.busy { animation:mpulse .6s ease-in-out infinite; opacity:.7; }
   #loader { position:fixed; inset:0; z-index:100; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; background:linear-gradient(#b4b9d0,#9ea3bd); transition:opacity .5s; }
   #loader .lg { display:flex; gap:4px; }
   #loader .lg span { font:700 34px 'Fredoka',system-ui,sans-serif; color:#fff; width:38px; height:46px; border-radius:10px; display:flex; align-items:center; justify-content:center; animation:lbob .9s ease-in-out infinite; box-shadow:inset 0 -5px 0 rgba(0,0,0,.2); }
@@ -4178,7 +4179,7 @@ function saveReplay(idx) {
   if (!G || !G.rec || !G.rec.length) return;
   const old = S.rep[idx];
   if (!old || old.m >= moves) S.rep[idx] = { m: moves, r: G.rec, t: Date.now() };
-  const keys = Object.keys(S.rep); if (keys.length > 80) { keys.sort((a, b) => S.rep[a].t - S.rep[b].t); for (const k of keys.slice(0, keys.length - 80)) delete S.rep[k]; }
+  const keys = Object.keys(S.rep); if (keys.length > 30) { keys.sort((a, b) => S.rep[a].t - S.rep[b].t); for (const k of keys.slice(0, keys.length - 30)) delete S.rep[k]; }
 }
 
 // ---------------- objetivo de la tercera estrella ----------------
@@ -4452,7 +4453,7 @@ function startSurv() {
   startGame(lv, { mode: 'surv', endless: true, level: lv, title: title(), theme: 31, noHelp: true, backLabel: '🏠 Abandonar', onExit: () => show('home'),
     tip: '¡Que no se llene el tablero!',
     onReset: () => startSurv(),
-    onPiece: () => { score++; $('gTitle').textContent = G.title = title(); if (score % 10 === 0) { toast('¡' + score + '!', '#fff'); sfx.bonus(); } },
+    onPiece: () => { score++; G.title = title(); updateHud(); if (score % 10 === 0) { toast('¡' + score + '!', '#fff'); sfx.bonus(); } },
     onClear: () => { survSpawn(); survSpawn(); },
     tick: dt => {
       if (over || paused) return;
@@ -4556,6 +4557,75 @@ function initExtras2() {
   const gb = el('button', 'btn light sm', '🎲'); gb.id = 'edGen'; gb.title = 'Generar nivel';
   gb.onclick = () => { sfx.click(); openGenerator(); };
   const u = $('edUndo'); u && u.parentNode.insertBefore(gb, u);
+}
+
+// ---------------- solucionador en segundo plano (no congela la animación) ----------------
+let SW = null, swId = 0; const swCb = {};
+function solverWorker() {
+  if (SW !== null) return SW;
+  try {
+    const src = Solver.toString() + '\nonmessage = e => { const d = e.data; let h = null; try { h = Solver(d.L).hint(d.st, d.a[0], d.a[1], d.a[2]); } catch (err) {} postMessage({ id: d.id, h: h ? { i: h.i, path: h.path, exit: h.exit, dead: !!h.dead, done: !!h.done } : null }); };';
+    SW = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+    SW.onmessage = e => { const cb = swCb[e.data.id]; delete swCb[e.data.id]; cb && cb(e.data.h); };
+    SW.onerror = () => { SW = false; for (const k of Object.keys(swCb)) { const cb = swCb[k]; delete swCb[k]; cb('fallo'); } };
+  } catch (e) { SW = false; }
+  return SW;
+}
+const stateToken = () => loadId + ':' + history.length + ':' + blocks.map(b => gone(b) ? '-' : b.x + '.' + b.y + '.' + b.c).join(',');
+function plainL() { return { w: L.w, h: L.h, gates: L.gates.map(g => ({ s: g.s, p: g.p, l: g.l, c: g.cyc ? g.cyc[0] : g.c, key: g.key, n: g.n, cap: g.cap, cyc: g.cyc, c2: g.c2 })), blocks: L.blocks, walls: L.walls, holes: L.holes, paints: L.paints, fx: L.fx }; }
+// pide una pista sin bloquear; cb(h) con h en formato del juego, {dead:true} o null. Se descarta si el tablero cambió.
+function hintAsync(a, cb) {
+  const { st, byId } = gameState(), tok = stateToken();
+  const fin = h => {
+    if (tok !== stateToken()) return;
+    if (!h) return cb(null);
+    if (h.dead) return cb({ dead: true });
+    if (h.done) return cb(null);
+    cb({ id: byId[h.i].id, path: h.path, exit: h.exit });
+  };
+  const w = solverWorker();
+  const sync = () => setTimeout(() => fin(Solver(L).hint(st, a[0], a[1], Math.min(a[2], 300))), 0);
+  if (!w) return sync();
+  const id = ++swId;
+  swCb[id] = h => { if (h === 'fallo') sync(); else fin(h); };
+  try { w.postMessage({ id, L: plainL(), st, a }); } catch (e) { delete swCb[id]; sync(); }
+}
+function scheduleDeadCheck() {
+  clearTimeout(deadTimer);
+  if (!L || !G || G.mode === 'edit' || G.mode === 'surv' || G.mode === 'replay' || !((L.paints && L.paints.length) || L.gates.some(g => g.cap || g.cyc) || (L.fx && L.fx.length) || L.blocks.some(b => b.j !== null && b.j !== undefined) || G.onDead)) return;
+  const my = loadId;
+  deadTimer = setTimeout(() => {
+    if (my !== loadId || won || drag || tapMove || settling || blocks.some(b => b.exiting)) { if (my === loadId && !won) scheduleDeadCheck(); return; }
+    hintAsync([30000, 16, 1500], h => setDead(!!(h && h.dead)));
+  }, 450);
+}
+function tutorialNext() {
+  if (!G || !G.tutorial || won) return;
+  hintAsync([150000, 16, 2500], h => { if (G && G.tutorial && !won && h && !h.dead) hintShow = Object.assign({}, h, { t: 0 }); });
+}
+let hintBusy = false;
+function useHint() {
+  if (!L || won || drag || hintBusy || blocks.some(b => b.exiting)) return;
+  const free = G && G.freeHints;
+  const go = after => {
+    hintBusy = true; $('bHint').classList.add('busy');
+    hintAsync([150000, 16, 2500], h => {
+      hintBusy = false; $('bHint').classList.remove('busy');
+      if (h && h.dead) { setDead(true); showModal({ icon: '🚫', title: 'Sin salida', text: 'Con las piezas así ya no se puede resolver. Deshaz movimientos hasta antes de ese momento o reinicia. No se ha gastado la pista.', buttons: [{ label: 'Deshacer', cls: 'go', fn: () => undo() }, { label: 'Reiniciar', fn: () => $('bReset').click() }] }); return; }
+      if (!h) { toast('Uy, este es complicado: deshaz un poco y pide otra', '#fff'); return; }
+      const b = blocks.find(o => o.id === h.id); if (b && b.m) { b.m = false; b.rev = 1; }
+      hintShow = { ...h, t: 0 }; S.stats.hints++; if (G) G.usedHint = true; sfx.bonus(); after && after(); updateHud();
+    });
+    setTimeout(() => { if (hintBusy) hintBusy = false; }, 4000);
+  };
+  if (free) { go(); return; }
+  if (S.hints > 0) { go(() => { S.hints--; save(); }); return; }
+  if (S.coins >= 25) {
+    showModal({ icon: '💡', title: '¿Usar una pista?', text: 'No te quedan pistas gratis. Cuesta <b>25 🪙</b> (tienes ' + S.coins + ').', buttons: [
+      { label: 'Usar por 25 🪙', cls: 'gold', fn: () => go(() => spendCoins(25)) }, { label: 'Ahora no' }] });
+    return;
+  }
+  showModal({ icon: '💡', title: 'Sin pistas', text: 'Consigue monedas superando niveles, retos y logros, o compra pistas en la tienda.', buttons: [{ label: 'Vale', cls: 'go' }] });
 }
 const GEN = (function () { const rnd = () => Math.random();
 
